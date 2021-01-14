@@ -137,11 +137,15 @@ public struct LightCompressor {
         let audioWriterInput = AVAssetWriterInput(mediaType: AVMediaType.audio, outputSettings: nil)
         audioWriterInput.expectsMediaDataInRealTime = false
         videoWriter.add(audioWriterInput)
+        
         //setup audio reader
-        let audioTrack = videoAsset.tracks(withMediaType: AVMediaType.audio)[0]
-        let audioReaderOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
-        let audioReader = try! AVAssetReader(asset: videoAsset)
-        audioReader.add(audioReaderOutput)
+        if(videoAsset.tracks(withMediaType: AVMediaType.audio).count > 0){
+            let audioTrack = videoAsset.tracks(withMediaType: AVMediaType.audio)[0]
+            let audioReaderOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
+            let audioReader = try! AVAssetReader(asset: videoAsset)
+            audioReader.add(audioReaderOutput)
+        }
+        
         videoWriter.startWriting()
         
         //start writing from video reader

@@ -137,16 +137,16 @@ public struct LightCompressor {
         let audioWriterInput = AVAssetWriterInput(mediaType: AVMediaType.audio, outputSettings: nil)
         audioWriterInput.expectsMediaDataInRealTime = false
         videoWriter.add(audioWriterInput)
-
-        var audioReaderOutput = AVAssetReaderTrackOutput?
+        
         var audioReader: AVAssetReader?
-
+        var audioReaderOutput: AVAssetReaderTrackOutput?
+        
         //setup audio reader
         if(videoAsset.tracks(withMediaType: AVMediaType.audio).count > 0){
             let audioTrack = videoAsset.tracks(withMediaType: AVMediaType.audio)[0]
             let audioReaderOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
             audioReader = try? AVAssetReader(asset: videoAsset)
-            audioReader.add(audioReaderOutput)
+            audioReader?.add(audioReaderOutput)
         }
         
         videoWriter.startWriting()
@@ -182,31 +182,38 @@ public struct LightCompressor {
                 } else {
                     videoWriterInput.markAsFinished()
                     if videoReader.status == .completed {
-                        //start writing from audio reader
-                        audioReader?.startReading()
-                        videoWriter.startSession(atSourceTime: CMTime.zero)
-                        let processingQueue = DispatchQueue(label: "processingQueue2")
                         
-                        audioWriterInput.requestMediaDataWhenReady(on: processingQueue, using: {() -> Void in
-                            while audioWriterInput.isReadyForMoreMediaData {
-                                let sampleBuffer:CMSampleBuffer? = audioReaderOutput?.copyNextSampleBuffer()
-                                if audioReader?.status == .reading && sampleBuffer != nil {
-                                    if isFirstBuffer {
-                                        let dict = CMTimeCopyAsDictionary(CMTimeMake(value: 1024, timescale: 44100), allocator: kCFAllocatorDefault);
-                                        CMSetAttachment(sampleBuffer as CMAttachmentBearer, key: kCMSampleBufferAttachmentKey_TrimDurationAtStart, value: dict, attachmentMode: kCMAttachmentMode_ShouldNotPropagate);
-                                        isFirstBuffer = false
-                                    }
-                                    audioWriterInput.append(sampleBuffer!)
-                                } else {
-                                    audioWriterInput.markAsFinished()
-                                    if audioReader?.status == .completed {
-                                        videoWriter.finishWriting(completionHandler: {() -> Void in
-                                            completion(.onSuccess(destination))
-                                        })
+                        //start writing from audio reader
+                        if let audioR = audioReader{
+                            audioR.startReading()
+                            videoWriter.startSession(atSourceTime: CMTime.zero)
+                            let processingQueue = DispatchQueue(label: "processingQueue2")
+                            
+                            audioWriterInput.requestMediaDataWhenReady(on: processingQueue, using: {() -> Void in
+                                while audioWriterInput.isReadyForMoreMediaData {
+                                    let sampleBuffer:CMSampleBuffer? = audioReaderOutput?.copyNextSampleBuffer()
+                                    if audioR.status == .reading && sampleBuffer != nil {
+                                        if isFirstBuffer {
+                                            let dict = CMTimeCopyAsDictionary(CMTimeMake(value: 1024, timescale: 44100), allocator: kCFAllocatorDefault);
+                                            CMSetAttachment(sampleBuffer as CMAttachmentBearer, key: kCMSampleBufferAttachmentKey_TrimDurationAtStart, value: dict, attachmentMode: kCMAttachmentMode_ShouldNotPropagate);
+                                            isFirstBuffer = false
+                                        }
+                                        audioWriterInput.append(sampleBuffer!)
+                                    } else {
+                                        audioWriterInput.markAsFinished()
+                                        if audioR.status == .completed {
+                                            videoWriter.finishWriting(completionHandler: {() -> Void in
+                                                completion(.onSuccess(destination))
+                                            })
+                                        }
                                     }
                                 }
-                            }
-                        })
+                            })
+                        }else{
+                            videoWriter.finishWriting(completionHandler: {() -> Void in
+                                completion(.onSuccess(destination))
+                            })
+                        }
                     }
                 }
             }

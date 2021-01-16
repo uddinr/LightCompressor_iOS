@@ -131,12 +131,16 @@ public struct LightCompressor {
             completion(.onFailure(compressionError))
         }
         
-        
         videoReader.add(videoReaderOutput)
+        
+        var audioWriterInput : AVAssetWriterInput?
+        
         //setup audio writer
-        let audioWriterInput = AVAssetWriterInput(mediaType: AVMediaType.audio, outputSettings: nil)
-        audioWriterInput.expectsMediaDataInRealTime = false
-        videoWriter.add(audioWriterInput)
+        if(videoAsset.tracks(withMediaType: AVMediaType.audio).count > 0){
+            audioWriterInput = AVAssetWriterInput(mediaType: AVMediaType.audio, outputSettings: nil)
+            audioWriterInput?.expectsMediaDataInRealTime = false
+            videoWriter.add(audioWriterInput!)
+        }
         
         var audioReader: AVAssetReader?
         var audioReaderOutput: AVAssetReaderTrackOutput?
@@ -144,9 +148,9 @@ public struct LightCompressor {
         //setup audio reader
         if(videoAsset.tracks(withMediaType: AVMediaType.audio).count > 0){
             let audioTrack = videoAsset.tracks(withMediaType: AVMediaType.audio)[0]
-            let audioReaderOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
+            audioReaderOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
             audioReader = try? AVAssetReader(asset: videoAsset)
-            audioReader?.add(audioReaderOutput)
+            audioReader?.add(audioReaderOutput!)
         }
         
         videoWriter.startWriting()
@@ -184,13 +188,13 @@ public struct LightCompressor {
                     if videoReader.status == .completed {
                         
                         //start writing from audio reader
-                        if let audioR = audioReader{
+                        if let audioR = audioReader, let audioWI = audioWriterInput{
                             audioR.startReading()
                             videoWriter.startSession(atSourceTime: CMTime.zero)
                             let processingQueue = DispatchQueue(label: "processingQueue2")
                             
-                            audioWriterInput.requestMediaDataWhenReady(on: processingQueue, using: {() -> Void in
-                                while audioWriterInput.isReadyForMoreMediaData {
+                            audioWI.requestMediaDataWhenReady(on: processingQueue, using: {() -> Void in
+                                while audioWI.isReadyForMoreMediaData {
                                     let sampleBuffer:CMSampleBuffer? = audioReaderOutput?.copyNextSampleBuffer()
                                     if audioR.status == .reading && sampleBuffer != nil {
                                         if isFirstBuffer {
@@ -198,9 +202,9 @@ public struct LightCompressor {
                                             CMSetAttachment(sampleBuffer as CMAttachmentBearer, key: kCMSampleBufferAttachmentKey_TrimDurationAtStart, value: dict, attachmentMode: kCMAttachmentMode_ShouldNotPropagate);
                                             isFirstBuffer = false
                                         }
-                                        audioWriterInput.append(sampleBuffer!)
+                                        audioWI.append(sampleBuffer!)
                                     } else {
-                                        audioWriterInput.markAsFinished()
+                                        audioWI.markAsFinished()
                                         if audioR.status == .completed {
                                             videoWriter.finishWriting(completionHandler: {() -> Void in
                                                 completion(.onSuccess(destination))

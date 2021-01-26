@@ -125,103 +125,103 @@ public struct LightCompressor {
         var videoReader: AVAssetReader!
         do{
             videoReader = try AVAssetReader(asset: videoAsset)
+
+            videoReader.add(videoReaderOutput)
+            
+            var audioWriterInput : AVAssetWriterInput?
+            
+            //setup audio writer
+            if(videoAsset.tracks(withMediaType: AVMediaType.audio).count > 0){
+                audioWriterInput = AVAssetWriterInput(mediaType: AVMediaType.audio, outputSettings: nil)
+                audioWriterInput?.expectsMediaDataInRealTime = false
+                videoWriter.add(audioWriterInput!)
+            }
+            
+            var audioReader: AVAssetReader?
+            var audioReaderOutput: AVAssetReaderTrackOutput?
+            
+            //setup audio reader
+            if(videoAsset.tracks(withMediaType: AVMediaType.audio).count > 0){
+                let audioTrack = videoAsset.tracks(withMediaType: AVMediaType.audio)[0]
+                audioReaderOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
+                audioReader = try? AVAssetReader(asset: videoAsset)
+                audioReader?.add(audioReaderOutput!)
+            }
+            
+            videoWriter.startWriting()
+            
+            //start writing from video reader
+            videoReader.startReading()
+            videoWriter.startSession(atSourceTime: CMTime.zero)
+            let processingQueue = DispatchQueue(label: "processingQueue1")
+            
+            var isFirstBuffer = true
+            videoWriterInput.requestMediaDataWhenReady(on: processingQueue, using: {() -> Void in
+                while videoWriterInput.isReadyForMoreMediaData {
+                    
+                    // Observe any cancellation
+                    if compressionOperation.cancel {
+                        videoReader.cancelReading()
+                        videoWriter.cancelWriting()
+                        completion(.onCancelled)
+                        return
+                    }
+                    
+                    // Update progress based on number of processed frames
+                    frameCount += 1
+                    if let handler = progressHandler {
+                        progress.completedUnitCount = Int64(frameCount)
+                        progressQueue.async { handler(progress) }
+                    }
+                    
+                    let sampleBuffer: CMSampleBuffer? = videoReaderOutput.copyNextSampleBuffer()
+                    
+                    if videoReader.status == .reading && sampleBuffer != nil {
+                        videoWriterInput.append(sampleBuffer!)
+                    } else {
+                        videoWriterInput.markAsFinished()
+                        if videoReader.status == .completed {
+                            
+                            //start writing from audio reader
+                            if let audioR = audioReader, let audioWI = audioWriterInput{
+                                audioR.startReading()
+                                videoWriter.startSession(atSourceTime: CMTime.zero)
+                                let processingQueue = DispatchQueue(label: "processingQueue2")
+                                
+                                audioWI.requestMediaDataWhenReady(on: processingQueue, using: {() -> Void in
+                                    while audioWI.isReadyForMoreMediaData {
+                                        let sampleBuffer:CMSampleBuffer? = audioReaderOutput?.copyNextSampleBuffer()
+                                        if audioR.status == .reading && sampleBuffer != nil {
+                                            if isFirstBuffer {
+                                                let dict = CMTimeCopyAsDictionary(CMTimeMake(value: 1024, timescale: 44100), allocator: kCFAllocatorDefault);
+                                                CMSetAttachment(sampleBuffer as CMAttachmentBearer, key: kCMSampleBufferAttachmentKey_TrimDurationAtStart, value: dict, attachmentMode: kCMAttachmentMode_ShouldNotPropagate);
+                                                isFirstBuffer = false
+                                            }
+                                            audioWI.append(sampleBuffer!)
+                                        } else {
+                                            audioWI.markAsFinished()
+                                            if audioR.status == .completed {
+                                                videoWriter.finishWriting(completionHandler: {() -> Void in
+                                                    completion(.onSuccess(destination))
+                                                })
+                                            }
+                                        }
+                                    }
+                                })
+                            }else{
+                                videoWriter.finishWriting(completionHandler: {() -> Void in
+                                    completion(.onSuccess(destination))
+                                })
+                            }
+                        }
+                    }
+                }
+            })
         }
         catch {
             let compressionError = CompressionError(title: error.localizedDescription)
             completion(.onFailure(compressionError))
         }
-        
-        videoReader.add(videoReaderOutput)
-        
-        var audioWriterInput : AVAssetWriterInput?
-        
-        //setup audio writer
-        if(videoAsset.tracks(withMediaType: AVMediaType.audio).count > 0){
-            audioWriterInput = AVAssetWriterInput(mediaType: AVMediaType.audio, outputSettings: nil)
-            audioWriterInput?.expectsMediaDataInRealTime = false
-            videoWriter.add(audioWriterInput!)
-        }
-        
-        var audioReader: AVAssetReader?
-        var audioReaderOutput: AVAssetReaderTrackOutput?
-        
-        //setup audio reader
-        if(videoAsset.tracks(withMediaType: AVMediaType.audio).count > 0){
-            let audioTrack = videoAsset.tracks(withMediaType: AVMediaType.audio)[0]
-            audioReaderOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
-            audioReader = try? AVAssetReader(asset: videoAsset)
-            audioReader?.add(audioReaderOutput!)
-        }
-        
-        videoWriter.startWriting()
-        
-        //start writing from video reader
-        videoReader.startReading()
-        videoWriter.startSession(atSourceTime: CMTime.zero)
-        let processingQueue = DispatchQueue(label: "processingQueue1")
-        
-        var isFirstBuffer = true
-        videoWriterInput.requestMediaDataWhenReady(on: processingQueue, using: {() -> Void in
-            while videoWriterInput.isReadyForMoreMediaData {
-                
-                // Observe any cancellation
-                if compressionOperation.cancel {
-                    videoReader.cancelReading()
-                    videoWriter.cancelWriting()
-                    completion(.onCancelled)
-                    return
-                }
-                
-                // Update progress based on number of processed frames
-                frameCount += 1
-                if let handler = progressHandler {
-                    progress.completedUnitCount = Int64(frameCount)
-                    progressQueue.async { handler(progress) }
-                }
-                
-                let sampleBuffer: CMSampleBuffer? = videoReaderOutput.copyNextSampleBuffer()
-                
-                if videoReader.status == .reading && sampleBuffer != nil {
-                    videoWriterInput.append(sampleBuffer!)
-                } else {
-                    videoWriterInput.markAsFinished()
-                    if videoReader.status == .completed {
-                        
-                        //start writing from audio reader
-                        if let audioR = audioReader, let audioWI = audioWriterInput{
-                            audioR.startReading()
-                            videoWriter.startSession(atSourceTime: CMTime.zero)
-                            let processingQueue = DispatchQueue(label: "processingQueue2")
-                            
-                            audioWI.requestMediaDataWhenReady(on: processingQueue, using: {() -> Void in
-                                while audioWI.isReadyForMoreMediaData {
-                                    let sampleBuffer:CMSampleBuffer? = audioReaderOutput?.copyNextSampleBuffer()
-                                    if audioR.status == .reading && sampleBuffer != nil {
-                                        if isFirstBuffer {
-                                            let dict = CMTimeCopyAsDictionary(CMTimeMake(value: 1024, timescale: 44100), allocator: kCFAllocatorDefault);
-                                            CMSetAttachment(sampleBuffer as CMAttachmentBearer, key: kCMSampleBufferAttachmentKey_TrimDurationAtStart, value: dict, attachmentMode: kCMAttachmentMode_ShouldNotPropagate);
-                                            isFirstBuffer = false
-                                        }
-                                        audioWI.append(sampleBuffer!)
-                                    } else {
-                                        audioWI.markAsFinished()
-                                        if audioR.status == .completed {
-                                            videoWriter.finishWriting(completionHandler: {() -> Void in
-                                                completion(.onSuccess(destination))
-                                            })
-                                        }
-                                    }
-                                }
-                            })
-                        }else{
-                            videoWriter.finishWriting(completionHandler: {() -> Void in
-                                completion(.onSuccess(destination))
-                            })
-                        }
-                    }
-                }
-            }
-        })
         
         return compressionOperation
     }
